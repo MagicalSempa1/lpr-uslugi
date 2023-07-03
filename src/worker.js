@@ -35,6 +35,12 @@ const textCleanupRegex = /[@"'\n\r;\\]/g;
 const verificationTries = 5;
 const descTelegramRegex = /^[ ]*Telegram:.*$/m;
 const descTUIDRegex = /^[ ]*TUID:.*$/m;
+const descPhoneRegex = /^[ ]*Телефон:.*$/m;
+const descEmailRegex = /^[ ]*Email:.*$/m;
+const descRegionRegex = /^[ ]*Регион:.*$/m;
+const descCityRegex = /^[ ]*Город или населённый пункт:.*$/m;
+const descDistrictRegex = /^[ ]*Район:.*$/m;
+const descAddressRegex = /^[ ]*Адрес:.*$/m;
 const birthDateRegex = /^([0-9]{2})\.([0-9]{2})\.([0-9]{4})$/;
 
 class PrivateMessageHandler {
@@ -54,6 +60,7 @@ class PrivateMessageHandler {
 		this.trello = new Trello(env.TRELLO_KEY, env.TRELLO_TOKEN);
 		this.state = null;
 		this.rowId = null;
+		this.tuid = null;
 	}
 
 	async setChatId() {
@@ -95,6 +102,9 @@ class PrivateMessageHandler {
 	}
 
 	async doMenus() {
+		if (this.state.startsWith('changing_')) {
+			return this.doChanging();
+		}
 		if (this.state.startsWith('menu_')) {
 			return this.findDestination();
 		}
@@ -102,6 +112,40 @@ class PrivateMessageHandler {
 			return this.findMainMenuDestination();
 		}
 		console.log('Необрабатываемое состояние! ', this.rowId, this.state, verification);
+	}
+
+	async doChanging() {
+		const input = this.text.replaceAll(textCleanupRegex, '');
+		let data;
+		switch (this.state) {
+			case 'changing_phone':
+				data = (await this.hourlyBase.query(`select A, H, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('H', data[0], data[1], input, 'телефона', descPhoneRegex, data[2], 'Телефон:');
+				break;
+			case 'changing_email':
+				data = (await this.hourlyBase.query(`select A, K, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('K', data[0], data[1], input, 'email', descEmailRegex, data[2], 'Email:');
+				break;
+			case 'changing_region':
+				data = (await this.hourlyBase.query(`select A, L, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('L', data[0], data[1], input, 'региона', descRegionRegex, data[2], 'Регион:');
+				break;
+			case 'changing_city':
+				data = (await this.hourlyBase.query(`select A, N, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('N', data[0], data[1], input, 'города', descCityRegex, data[2], 'Город или населённый пункт:');
+				break;
+			case 'changing_district':
+				data = (await this.hourlyBase.query(`select A, M, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('M', data[0], data[1], input, 'района', descDistrictRegex, data[2], 'Район:');
+				break;
+			case 'changing_address':
+				data = (await this.hourlyBase.query(`select A, V, J where T = ${this.tuid}`))[0];
+				await this.updateCardField('V', data[0], data[1], input, 'адреса', descAddressRegex, data[2], 'Адрес:');
+				break;
+		}
+		await this.setState('menu_changing');
+		await this.sendMessage('Данные изменены');
+		return this.sendMenu('Вы в меню изменения учётных данных', await this.buildMenu('menu_changing'));
 	}
 
 	async buildMenu(targetState) {
@@ -125,28 +169,73 @@ class PrivateMessageHandler {
 			}
 		}
 		let [targetState, targetDescription] = destination[0];
-		await this.setState(targetState);
+		if (targetState != this.state) {
+			await this.setState(targetState);
+		}
 		if (targetState == 'main_menu') {
 			if (targetDescription != '') {
 				await this.sendMessage(targetDescription);
 			}
 			return this.sendMainMenu();
-		} else {
-			return this.sendMenu(targetDescription, await this.buildMenu(targetState));
 		}
+		if (targetState.startsWith('changing_')) {
+			let data;
+			switch (targetState) {
+				case 'changing_phone':
+					data = (await this.hourlyBase.query(`select H where T = ${this.tuid}`))[0];
+					await this.sendMessage('Телефон сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Телефон', 'Введите новый телефон:');
+					return;
+				case 'changing_email':
+					data = (await this.hourlyBase.query(`select K where T = ${this.tuid}`))[0];
+					await this.sendMessage('Email сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Email', 'Введите новый email:');
+					return;
+				case 'changing_region':
+					data = (await this.hourlyBase.query(`select L where T = ${this.tuid}`))[0];
+					await this.sendMessage('Регион сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Регион', 'Введите новый регион:');
+					return;
+				case 'changing_city':
+					data = (await this.hourlyBase.query(`select N where T = ${this.tuid}`))[0];
+					await this.sendMessage('Город сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Город', 'Введите новый город:');
+					return;
+				case 'changing_district':
+					data = (await this.hourlyBase.query(`select M where T = ${this.tuid}`))[0];
+					await this.sendMessage('Район сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Район', 'Введите новый район:');
+					return;
+				case 'changing_address':
+					data = (await this.hourlyBase.query(`select V where T = ${this.tuid}`))[0];
+					await this.sendMessage('Адрес сейчас:');
+					await this.sendMessage(`${data[0]}`);
+					await this.forceReply('Адрес', 'Введите новый адрес:');
+					return;
+			}
+		}
+		if (targetDescription == 'Текущие учётные данные:') {
+			const data = (await this.hourlyBase.query(`select H, K, L, M, N, V where T = ${this.tuid}`))[0];
+			return this.sendMenu(
+				`Текущие учётные данные:\nТелефон: ${data[0]}\nEmail: ${data[1]}\nРегион: ${data[2]}\nГород: ${data[4]}\nРайон: ${data[3]}\nАдрес: ${data[5]}`,
+				await this.buildMenu(targetState)
+			);
+		}
+		return this.sendMenu(targetDescription, await this.buildMenu(targetState));
 	}
 
 	async findMainMenuDestination() {
 		const destText = this.text.replaceAll(textCleanupRegex, '');
-		if (destText == 'Уточнить учётные данные') {
-			return this.sendMainMenu();
-		}
 		return this.findDestination();
 	}
 
 	async sendMainMenu() {
 		let buttons = await this.buildMenu('main_menu');
-		buttons.push([{ text: 'Уточнить учётные данные' }]);
 		await this.telegram('sendMessage', {
 			chat_id: this.chatId,
 			text: 'Вы в главном меню',
@@ -272,6 +361,7 @@ class PrivateMessageHandler {
 		let [rowid, tuid, chatid, state, verification, familyname, name] = stateRow[0];
 		this.rowId = rowid;
 		this.state = state;
+		this.tuid = tuid;
 		if (chatid != this.chatId) {
 			await this.setChatId();
 		}
