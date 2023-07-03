@@ -31,7 +31,8 @@ export default {
 	},
 };
 
-const textCleanupRegex = /[@"'\n\r;\\]/g;
+const textCleanupRegex = /["'\n\r;\\]/g;
+const numberCleanupRegex = /[^0-9+]/g;
 const verificationTries = 5;
 const descTelegramRegex = /^[ ]*Telegram:.*$/m;
 const descTUIDRegex = /^[ ]*TUID:.*$/m;
@@ -49,6 +50,7 @@ class PrivateMessageHandler {
 		this.username = message.chat.username;
 		this.chatId = message.chat.id;
 		this.fromId = message.from.id;
+		this.contact = message.contact;
 		this.sheets = new SheetsAPI(env.SERVICE_USER, env.SERVICE_KEY);
 		this.SPREADSHEET_ID = env.SPREADSHEET_ID;
 		this.HOURLY_BASE_GID = env.HOURLY_BASE_GID;
@@ -61,6 +63,7 @@ class PrivateMessageHandler {
 		this.state = null;
 		this.rowId = null;
 		this.tuid = null;
+		this.phone = null;
 	}
 
 	async setChatId() {
@@ -81,6 +84,25 @@ class PrivateMessageHandler {
 
 	async setName(newName) {
 		await this.botState.setValues(`H${this.rowId}:H${this.rowId}`, [[newName.replaceAll(textCleanupRegex, '').toLowerCase()]]);
+	}
+
+	async setPhone(newPhone) {
+		if (newPhone != '') {
+			newPhone = this.phoneCleanup(newPhone);
+		}
+		await this.botState.setValues(`I${this.rowId}:I${this.rowId}`, [[newPhone]]);
+	}
+
+	phoneCleanup(phone) {
+		let cleanedPhone = phone.replaceAll(numberCleanupRegex, '');
+		if (!cleanedPhone.startsWith('+')) {
+			if (cleanedPhone.startsWith('8')) {
+				cleanedPhone = cleanedPhone.replace('8', '+7');
+			} else {
+				cleanedPhone = '+' + cleanedPhone;
+			}
+		}
+		return cleanedPhone;
 	}
 
 	async sendMessage(text) {
@@ -115,14 +137,20 @@ class PrivateMessageHandler {
 	}
 
 	async doChanging() {
-		const input = this.text.replaceAll(textCleanupRegex, '');
+		let input = this.text.replaceAll(textCleanupRegex, '');
 		let data;
 		switch (this.state) {
 			case 'changing_phone':
 				data = (await this.hourlyBase.query(`select A, H, J where T = ${this.tuid}`))[0];
+				input = this.phoneCleanup(input);
 				await this.updateCardField('H', data[0], data[1], input, 'телефона', descPhoneRegex, data[2], 'Телефон:');
 				break;
 			case 'changing_email':
+				if (!input.includes('@')) {
+					await this.setState('menu_changing');
+					await this.sendMessage('В email должна быть @');
+					return this.sendMenu('Вы в меню изменения учётных данных', await this.buildMenu('menu_changing'));
+				}
 				data = (await this.hourlyBase.query(`select A, K, J where T = ${this.tuid}`))[0];
 				await this.updateCardField('K', data[0], data[1], input, 'email', descEmailRegex, data[2], 'Email:');
 				break;
@@ -285,14 +313,46 @@ class PrivateMessageHandler {
 		});
 	}
 
+	async sendPhoneNicknameMenu() {
+		await this.telegram('sendMessage', {
+			chat_id: this.chatId,
+			text: 'Выберите способ регистрации:',
+			reply_markup: {
+				keyboard: [[{ text: 'По никнейму' }], [{ text: 'По номеру телефона', request_contact: true }]],
+				is_persistent: true,
+				resize_keyboard: true,
+				one_time_keyboard: true,
+			},
+		});
+	}
+
 	async verifyUser(verification, familyname, name, tuid) {
 		switch (this.state) {
 			case 'start':
-				if (!this.username) {
-					await this.sendMessage('Бот не смог прочитать никнейм. Пожалуйста, проверьте настройки приватности. После окончания проверки их можно будет включить обратно.');
+				await this.setState('register_phone');
+				await this.sendMessage('Добро пожаловать на ЛПРУслуги. Доступно 2 варианта регистрации по номеру телефона и по никнейму.');
+				return this.sendPhoneNicknameMenu();
+			case 'register_phone':
+				if (this.contact) {
+					if (!(this.contact.user_id == this.fromId)) {
+						await this.sendMessage(
+							'Бот не смог прочитать номер телефона (или прислан чужой номер). Пожалуйста, проверьте настройки приватности. После окончания проверки их можно будет включить обратно.'
+						);
+						return this.sendPhoneNicknameMenu();
+					}
+					await this.setPhone(this.contact.phone_number);
+				} else if (this.text == 'По никнейму') {
+					if (!this.username) {
+						await this.sendMessage('Бот не смог прочитать никнейм. Пожалуйста, проверьте настройки приватности. После окончания проверки их можно будет включить обратно.');
+						return this.sendPhoneNicknameMenu();
+					}
+					await this.setPhone('');
+				} else {
+					await this.sendMessage('Нераспознанная команда');
+					return this.sendPhoneNicknameMenu();
 				}
 				await this.setState('register_familyname');
-				await this.forceReply('Фамилия', 'Добро пожаловать в ЛПРУслуги. Давайте удостоверимся что Вы это Вы. Для проверки введите свою фамилию:');
+				await this.forceReply('Фамилия', 'Для проверки введите свою фамилию:');
 				return;
 			case 'register_familyname':
 				await this.setState('register_name');
@@ -313,37 +373,68 @@ class PrivateMessageHandler {
 				} else {
 					birthdate = `${matches[3]}-${matches[2]}-${matches[1]}`;
 				}
-				if (!this.username) {
-					await this.sendMessage('Бот не смог прочитать никнейм. Пожалуйста, проверьте настройки приватности. После окончания проверки их можно будет включить обратно.');
-					return;
-				}
-				let username = this.username.replace('@', '');
-				let cardRow = await this.hourlyBase.query(`select A, J, I where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and T = ${tuid}`);
+
+				let cardRow = await this.hourlyBase.query(`select A, J, I, H where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and T = ${tuid}`);
 				if (cardRow.length > 0) {
-					let [rowId, cardId, oldUsername] = cardRow[0];
-					if (oldUsername != username) {
+					let [rowId, cardId, oldUsername, oldPhone] = cardRow[0];
+					let username = this.username.replace('@', '');
+					if (this.username && oldUsername != username) {
 						await this.updateCardField('I', rowId, oldUsername, username, 'юзернейма', descTelegramRegex, cardId, 'Telegram:');
 					}
+					if (this.phone && oldPhone != this.phone) {
+						await this.updateCardField('H', rowId, oldPhone, this.phone, 'телефона', descPhoneRegex, cardId, 'Телефон:');
+					}
 					return this.verificationComplete(cardId);
 				}
-				cardRow = await this.hourlyBase.query(`select A, J, T where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and I = "${username}"`);
-				if (cardRow.length > 0) {
-					let [rowId, cardId, oldTuid] = cardRow[0];
-					if (oldTuid != '' && tuid != oldTuid) {
-						await this.setState('duplicate');
-						return this.sendMessage('В системе уже есть такой пользователь. Возможно, эта ошибка вызвана тем, что вы недавно сменили телеграм-аккаунт. Обратитесь в РК');
-					}
-					await this.updateCardField('T', rowId, oldTuid, tuid, 'TUID', descTUIDRegex, cardId, 'TUID:');
+				if (this.phone) {
+					cardRow = await this.hourlyBase.query(`select A, J, T where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and H = "${this.phone}"`);
+					if (cardRow.length > 0) {
+						let [rowId, cardId, oldTuid] = cardRow[0];
+						if (oldTuid != '' && tuid != oldTuid) {
+							await this.setState('duplicate');
+							return this.sendMessage('В системе уже есть такой пользователь. Возможно, эта ошибка вызвана тем, что вы недавно сменили телеграм-аккаунт. Обратитесь в РК');
+						}
+						await this.updateCardField('T', rowId, oldTuid, parseInt(tuid, 10), 'TUID', descTUIDRegex, cardId, 'TUID:');
 
-					return this.verificationComplete(cardId);
+						return this.verificationComplete(cardId);
+					}
+				} else {
+					if (!this.username) {
+						await this.sendMessage('Бот не смог прочитать никнейм. Пожалуйста, проверьте настройки приватности. После окончания проверки их можно будет включить обратно.');
+						await this.sendMessage('Добро пожаловать на ЛПРУслуги. Доступно 2 варианта регистрации по номеру телефона и по никнейму:');
+						await this.setState('register_phone');
+						return this.sendPhoneNicknameMenu();
+					}
+					cardRow = await this.hourlyBase.query(`select A, J, T where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and I = "${username}"`);
+					if (cardRow.length > 0) {
+						let [rowId, cardId, oldTuid] = cardRow[0];
+						if (oldTuid != '' && tuid != oldTuid) {
+							await this.setState('duplicate');
+							return this.sendMessage('В системе уже есть такой пользователь. Возможно, эта ошибка вызвана тем, что вы недавно сменили телеграм-аккаунт. Обратитесь в РК');
+						}
+						await this.updateCardField('T', rowId, oldTuid, parseInt(tuid, 10), 'TUID', descTUIDRegex, cardId, 'TUID:');
+
+						return this.verificationComplete(cardId);
+					}
 				}
 				await this.setVerifiсation(parseInt(verification, 10) + 1);
 				if (parseInt(verification, 10) + 1 >= verificationTries) {
-					await this.sendMessage('Такие имя, фамилия и дата рождения не нашлись. Попытки закончились. Обратитесь в РК');
+					if (this.phone) {
+						await this.sendMessage('Такие имя, фамилия, дата рождения и телефон не нашлись. Попытки закончились. Обратитесь в РК');
+					} else {
+						await this.sendMessage('Такие имя, фамилия, дата рождения и никнейм не нашлись. Попытки закончились. Обратитесь в РК');
+					}
 				} else {
-					await this.forceReply('Фамилия', 'Такие имя, фамилия и дата рождения не нашлись. Попробуйте ещё раз. Введите фамилию:');
+					if (this.phone) {
+						await this.sendMessage('Фамилия', 'Такие имя, фамилия и дата рождения не нашлись. Попробуйте ещё раз.');
+					} else {
+						await this.sendMessage('Фамилия', 'Такие имя, фамилия и дата рождения не нашлись. Попробуйте ещё раз.');
+					}
+					await this.setState('register_phone');
+					return this.sendPhoneNicknameMenu();
 				}
-				return this.setState('register_familyname');
+				await this.setState('start');
+				return;
 		}
 		console.log('Необрабатываемое состояние! ', this.rowId, this.state, verification);
 	}
@@ -352,16 +443,17 @@ class PrivateMessageHandler {
 		this.hourlyBase = await this.sheets.getSheet(this.SPREADSHEET_ID, this.HOURLY_BASE_GID, 'HourlyBase');
 		this.botState = await this.sheets.getSheet(this.SPREADSHEET_ID, this.LPR_USLUGI_BOT_STATE_GID, 'LPRUslugiBotState');
 		this.botMenu = await this.sheets.getSheet(this.SPREADSHEET_ID, this.LPR_USLUGI_BOT_MENU_GID, 'LPRUslugiBotMenu');
-		const selectState = `select A, B, C, D, E, G, H where B = ${this.fromId}`;
+		const selectState = `select A, B, C, D, E, G, H, I where B = ${this.fromId}`;
 		let stateRow = await this.botState.query(selectState);
 		if (stateRow.length == 0) {
 			await this.botState.append('A:E', [['=ROW()', `${this.fromId}`, `${this.chatId}`, 'start', 0]]);
 			stateRow = await this.botState.query(selectState);
 		}
-		let [rowid, tuid, chatid, state, verification, familyname, name] = stateRow[0];
+		let [rowid, tuid, chatid, state, verification, familyname, name, phone] = stateRow[0];
 		this.rowId = rowid;
 		this.state = state;
-		this.tuid = tuid;
+		this.tuid = parseInt(tuid, 10);
+		this.phone = phone;
 		if (chatid != this.chatId) {
 			await this.setChatId();
 		}
