@@ -157,13 +157,29 @@ class PrivateMessageHandler {
 			return this.sendMainMenu();
 		}
 		try {
-			await this.sendToMRK(`ЛПРУслуги-чат; Пользователь (${this.tuid}): ${this.text}`);
+			let user = (await this.hourlyBase.query(`select H, I, D where T = ${this.tuid}`))[0];
+			switch (this.state) {
+				case 'chat':
+					await this.sendToMRK(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}): ${this.text}`);
+					break;
+				case 'emergency_chat':
+					await this.sendToEmergency(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}): ${this.text}`);
+					break;
+			}
 		} catch (err) {}
 	}
 
 	async sendToMRK(text) {
 		await this.telegram('sendMessage', {
 			chat_id: this.MRK_CHAT_ID,
+			text: text,
+		});
+		await this.sendMessage('Сообщение доставлено');
+	}
+
+	async sendToEmergency(text) {
+		await this.telegram('sendMessage', {
+			chat_id: this.EMERGENCY_CHAT_ID,
 			text: text,
 		});
 		await this.sendMessage('Сообщение доставлено');
@@ -176,9 +192,9 @@ class PrivateMessageHandler {
 			return this.sendMainMenu();
 		}
 		try {
-			let user = (await this.hourlyBase.query(`select D where T = ${this.tuid}`))[0];
+			let user = (await this.hourlyBase.query(`select D, С, H, I, K, L, N, M, V where T = ${this.tuid}`))[0];
 			if (user) {
-				await this.sendToMRK(`ЗАДЕРЖАНИЕ! (${this.tuid}) ${user[0]}`);
+				await this.sendToMRK(`ЗАДЕРЖАНИЕ! (${this.tuid}) ${user[0]}; ${user[1]}; ${user[2]}; @${user[3]}; ${user[4]}; ${user[5]}; ${user[6]}; ${user[7]}; ${user[8]}`);
 			}
 		} catch (err) {
 			return;
@@ -301,7 +317,7 @@ class PrivateMessageHandler {
 		if (targetState == 'emergency_confirm') {
 			return this.telegram('sendMessage', {
 				chat_id: this.chatId,
-				text: 'Подтвердите задержание. МРК получит сообщение о задержании. УЧЁТНАЯ ЗАПИСЬ БУДЕТ ЗАБЛОКИРОВАНА! Но будет доступен чат с МРК.',
+				text: 'Подтвердите задержание. Правозащитный чат получит сообщение о задержании. УЧЁТНАЯ ЗАПИСЬ БУДЕТ ЗАБЛОКИРОВАНА! Но будет доступна пересылка сообщений в чат правозащиты.',
 				reply_markup: {
 					keyboard: [[{ text: 'Да. Задержан.' }], [{ text: 'Нет. Вернуться в главное меню' }]],
 					is_persistent: true,
@@ -558,7 +574,7 @@ class GroupMessageHandler {
 	}
 
 	async process() {
-		if (this.chatId != this.MRK_CHAT_ID) {
+		if (this.chatId != this.MRK_CHAT_ID && this.chatId != this.EMERGENCY_CHAT_ID) {
 			try {
 				await this.telegram('sendMessage', {
 					chat_id: this.chatId,
@@ -575,22 +591,32 @@ class GroupMessageHandler {
 			let replyMatch = (this.reply.text || '').match(reLPRUslugiChat);
 			if (replyMatch) {
 				let replyChatId = parseInt(replyMatch[1]);
-				return this.resendToUser(replyChatId);
+				return this.resendToUser(replyChatId, 'mrk');
 			}
 			replyMatch = (this.reply.text || '').match(reLPRUslugiEmergency);
 			if (replyMatch) {
 				let replyChatId = parseInt(replyMatch[1]);
-				return this.resendToUser(replyChatId);
+				return this.resendToUser(replyChatId, 'emergency');
 			}
 		}
 	}
 
-	async resendToUser(replyChatId) {
+	async resendToUser(replyChatId, type) {
 		try {
-			await this.telegram('sendMessage', {
-				chat_id: replyChatId,
-				text: `МРК написал: ${this.text}`,
-			});
+			switch (type) {
+				case 'mrk':
+					await this.telegram('sendMessage', {
+						chat_id: replyChatId,
+						text: `МРК написал: ${this.text}`,
+					});
+					break;
+				case 'emergency':
+					await this.telegram('sendMessage', {
+						chat_id: replyChatId,
+						text: `Из правозащитной группы: ${this.text}`,
+					});
+					break;
+			}
 			await this.telegram('sendMessage', {
 				chat_id: this.chatId,
 				text: 'Сообщение доставлено',
