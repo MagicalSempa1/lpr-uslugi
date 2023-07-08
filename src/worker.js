@@ -1,5 +1,18 @@
 import { Trello, telegram, SheetsAPI } from './external-api.js';
 
+function processUpdate(update, env) {
+	try {
+		if (update.message && update.message.chat.type === 'private') {
+			return new PrivateMessageHandler(update.message, env).process();
+		}
+		if (update.message && (update.message.chat.type === 'group' || update.message.chat.type === 'supergroup')) {
+			return new GroupMessageHandler(update.message, env).process();
+		}
+	} catch (err) {
+		console.error(`Error: ${err} ; Stack: ${err.stack}`);
+	}
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		let url = new URL(request.url);
@@ -13,13 +26,7 @@ export default {
 
 			const update = await request.json();
 
-			try {
-				if (update.message && update.message.chat.type === 'private') {
-					await new PrivateMessageHandler(update.message, env).process();
-				}
-			} catch (err) {
-				console.error(`Error: ${err} ; Stack: ${err.stack}`);
-			}
+			await processUpdate(update, env);
 
 			return new Response('OK', {
 				headers: { 'content-type': 'text/plain' },
@@ -56,6 +63,7 @@ class PrivateMessageHandler {
 		this.HOURLY_BASE_GID = env.HOURLY_BASE_GID;
 		this.LPR_USLUGI_BOT_STATE_GID = env.LPR_USLUGI_BOT_STATE_GID;
 		this.LPR_USLUGI_BOT_MENU_GID = env.LPR_USLUGI_BOT_MENU_GID;
+		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
 		this.hourlyBase = null;
 		this.botState = null;
 		this.telegram = telegram(env.TELEGRAM_BOT_TOKEN);
@@ -133,7 +141,50 @@ class PrivateMessageHandler {
 		if (this.state == 'main_menu') {
 			return this.findMainMenuDestination();
 		}
+		if (this.state == 'chat' || this.state == 'emergency_chat') {
+			return this.doChat();
+		}
+		if (this.state == 'emergency_confirm') {
+			return this.emergencyConfirm();
+		}
 		console.log('Необрабатываемое состояние! ', this.rowId, this.state, verification);
+	}
+
+	async doChat() {
+		if (this.state == 'chat' && this.text.toLowerCase() == 'выход') {
+			await this.setState('main_menu');
+			await this.sendMessage('Выходим из чата в главное меню.');
+			return this.sendMainMenu();
+		}
+		try {
+			await this.sendToMRK(`ЛПРУслуги-чат; Пользователь (${this.tuid}): ${this.text}`);
+		} catch (err) {}
+	}
+
+	async sendToMRK(text) {
+		await this.telegram('sendMessage', {
+			chat_id: this.MRK_CHAT_ID,
+			text: text,
+		});
+		await this.sendMessage('Сообщение доставлено');
+	}
+
+	async emergencyConfirm() {
+		if (this.text != 'Да. Задержан.') {
+			await this.setState('main_menu');
+			await this.sendMessage('Задержание не подтверждено. Возвращаемся в главное меню.');
+			return this.sendMainMenu();
+		}
+		try {
+			let user = (await this.hourlyBase.query(`select D where T = ${this.tuid}`))[0];
+			if (user) {
+				await this.sendToMRK(`ЗАДЕРЖАНИЕ! (${this.tuid}) ${user[0]}`);
+			}
+		} catch (err) {
+			return;
+		}
+		await this.setState('emergency_chat');
+		return this.sendMessage('Задержание подтверждено! Учётная запись заблокирована и переведена в режим экстренного чата с МРК. Все сообщения пересылаются в чат МРК.');
 	}
 
 	async doChanging() {
@@ -246,6 +297,30 @@ class PrivateMessageHandler {
 					await this.forceReply('Адрес', 'Введите новый адрес:');
 					return;
 			}
+		}
+		if (targetState == 'emergency_confirm') {
+			return this.telegram('sendMessage', {
+				chat_id: this.chatId,
+				text: 'Подтвердите задержание. МРК получит сообщение о задержании. УЧЁТНАЯ ЗАПИСЬ БУДЕТ ЗАБЛОКИРОВАНА! Но будет доступен чат с МРК.',
+				reply_markup: {
+					keyboard: [[{ text: 'Да. Задержан.' }], [{ text: 'Нет. Вернуться в главное меню' }]],
+					is_persistent: true,
+					resize_keyboard: true,
+					one_time_keyboard: true,
+				},
+			});
+		}
+		if (targetState == 'chat') {
+			return this.telegram('sendMessage', {
+				chat_id: this.chatId,
+				text: 'Вы в чате обратной связи с МРК. Все сообщения пересылаются в чат МРК. Для выхода из чата нажмите кнопку "выход" или напишите "выход".',
+				reply_markup: {
+					keyboard: [[{ text: 'Выход' }]],
+					is_persistent: true,
+					resize_keyboard: true,
+					one_time_keyboard: false,
+				},
+			});
 		}
 		if (targetDescription == 'Текущие учётные данные:') {
 			const data = (await this.hourlyBase.query(`select H, K, L, M, N, V where T = ${this.tuid}`))[0];
@@ -467,6 +542,61 @@ class PrivateMessageHandler {
 			return this.sendMessage('Превышено количество попыток проверки. Обратитесь в РК');
 		} else {
 			return this.verifyUser(verification, familyname, name, tuid);
+		}
+	}
+}
+
+const reLPRUslugiChat = /^ЛПРУслуги-чат;.*\((.*?)\).*/;
+const reLPRUslugiEmergency = /^ЗАДЕРЖАНИЕ!.*\((.*?)\).*/;
+class GroupMessageHandler {
+	constructor(message, env) {
+		this.text = message.text;
+		this.chatId = message.chat.id;
+		this.reply = message.reply_to_message;
+		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
+		this.telegram = telegram(env.TELEGRAM_BOT_TOKEN);
+	}
+
+	async process() {
+		if (this.chatId != this.MRK_CHAT_ID) {
+			try {
+				await this.telegram('sendMessage', {
+					chat_id: this.chatId,
+					text: `${this.chatId}`,
+				});
+				return this.telegram('leaveChat', {
+					chat_id: this.chatId,
+				});
+			} catch (err) {
+				return Promise.resolve();
+			}
+		}
+		if (this.reply) {
+			let replyMatch = (this.reply.text || '').match(reLPRUslugiChat);
+			if (replyMatch) {
+				let replyChatId = parseInt(replyMatch[1]);
+				return this.resendToUser(replyChatId);
+			}
+			replyMatch = (this.reply.text || '').match(reLPRUslugiEmergency);
+			if (replyMatch) {
+				let replyChatId = parseInt(replyMatch[1]);
+				return this.resendToUser(replyChatId);
+			}
+		}
+	}
+
+	async resendToUser(replyChatId) {
+		try {
+			await this.telegram('sendMessage', {
+				chat_id: replyChatId,
+				text: `МРК написал: ${this.text}`,
+			});
+			await this.telegram('sendMessage', {
+				chat_id: this.chatId,
+				text: 'Сообщение доставлено',
+			});
+		} catch (err) {
+			return console.error(err);
 		}
 	}
 }
