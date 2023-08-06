@@ -55,6 +55,7 @@ class PrivateMessageHandler {
 	constructor(message, env) {
 		this.text = message.text || '';
 		this.username = message.chat.username;
+		this.messageId = message.message_id;
 		this.chatId = message.chat.id;
 		this.fromId = message.from.id;
 		this.contact = message.contact;
@@ -155,7 +156,7 @@ class PrivateMessageHandler {
 		if (this.state == 'emergency_confirm') {
 			return this.emergencyConfirm();
 		}
-		console.log('Необрабатываемое состояние! ', this.rowId, this.state, verification);
+		console.log('Необрабатываемое состояние! ', this.rowId, this.state);
 	}
 
 	async doChat() {
@@ -168,10 +169,20 @@ class PrivateMessageHandler {
 			let user = (await this.hourlyBase.query(`select H, I, D where T = ${this.tuid}`))[0];
 			switch (this.state) {
 				case 'chat':
-					await this.sendToMRK(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}): ${this.text}`);
+					await this.sendToMRK(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}):`);
+					await this.telegram('copyMessage', {
+						chat_id: this.MRK_CHAT_ID,
+						from_chat_id: this.chatId,
+						message_id: this.messageId,
+					});
 					break;
 				case 'emergency_chat':
-					await this.sendToEmergency(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}): ${this.text}`);
+					await this.sendToEmergency(`ЛПРУслуги-чат; ${user[1] != '' ? `@${user[1]}` : `${user[0]}; ${user[2]}`}; (${this.tuid}):`);
+					await this.telegram('copyMessage', {
+						chat_id: this.EMERGENCY_CHAT_ID,
+						from_chat_id: this.chatId,
+						message_id: this.messageId,
+					});
 					break;
 			}
 		} catch (err) {}
@@ -526,15 +537,19 @@ class PrivateMessageHandler {
 				await this.setVerifiсation(parseInt(verification, 10) + 1);
 				if (parseInt(verification, 10) + 1 >= verificationTries) {
 					if (this.phone) {
-						await this.sendMessage('Такие имя, фамилия, дата рождения и телефон не нашлись. Попытки закончились. Обратитесь в РК');
+						await this.sendMessage('Такие имя, фамилия, дата рождения и телефон не нашлись. Попытки закончились. Обратитесь в МРК');
 					} else {
-						await this.sendMessage('Такие имя, фамилия, дата рождения и никнейм не нашлись. Попытки закончились. Обратитесь в РК');
+						await this.sendMessage('Такие имя, фамилия, дата рождения и никнейм не нашлись. Попытки закончились. Обратитесь в МРК');
 					}
 				} else {
 					if (this.phone) {
-						await this.sendMessage('Фамилия', 'Такие имя, фамилия и дата рождения не нашлись. Попробуйте ещё раз.');
+						await this.sendMessage(
+							'Такие телефон, имя, фамилия или дата рождения не нашлись. Попробуйте ещё раз и проверьте, что данные соответствуют тем с которыми вступали в партию. Фамилия:'
+						);
 					} else {
-						await this.sendMessage('Фамилия', 'Такие имя, фамилия и дата рождения не нашлись. Попробуйте ещё раз.');
+						await this.sendMessage(
+							'Такие никнейм, имя, фамилия или дата рождения не нашлись. Попробуйте ещё раз и проверьте, что данные соответствуют тем с которыми вступали в партию. Фамилия:'
+						);
 					}
 					await this.setState('register_phone');
 					return this.sendPhoneNicknameMenu();
@@ -583,6 +598,7 @@ class GroupMessageHandler {
 	constructor(message, env) {
 		this.text = message.text || '';
 		this.chatId = message.chat.id;
+		this.messageId = message.message_id;
 		this.reply = message.reply_to_message;
 		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
 		this.telegram = telegram(env.TELEGRAM_BOT_TOKEN);
@@ -622,13 +638,23 @@ class GroupMessageHandler {
 				case 'mrk':
 					await this.telegram('sendMessage', {
 						chat_id: replyChatId,
-						text: `МРК написал: ${this.text}`,
+						text: `МРК написал:`,
+					});
+					await this.telegram('copyMessage', {
+						chat_id: replyChatId,
+						from_chat_id: this.chatId,
+						message_id: this.messageId,
 					});
 					break;
 				case 'emergency':
 					await this.telegram('sendMessage', {
 						chat_id: replyChatId,
-						text: `Из правозащитной группы: ${this.text}`,
+						text: `Из правозащитной группы:`,
+					});
+					await this.telegram('copyMessage', {
+						chat_id: replyChatId,
+						from_chat_id: this.chatId,
+						message_id: this.messageId,
 					});
 					break;
 			}
