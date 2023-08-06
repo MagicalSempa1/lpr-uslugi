@@ -53,7 +53,7 @@ const birthDateRegex = /^([0-9]{2})\.([0-9]{2})\.([0-9]{4})$/;
 
 class PrivateMessageHandler {
 	constructor(message, env) {
-		this.text = message.text;
+		this.text = message.text || '';
 		this.username = message.chat.username;
 		this.chatId = message.chat.id;
 		this.fromId = message.from.id;
@@ -117,6 +117,14 @@ class PrivateMessageHandler {
 		await this.telegram('sendMessage', {
 			chat_id: this.chatId,
 			text: text,
+		});
+	}
+
+	async sendFormattedMessage(text) {
+		await this.telegram('sendMessage', {
+			chat_id: this.chatId,
+			text: text || ' ',
+			parse_mode: 'HTML',
 		});
 	}
 
@@ -367,6 +375,12 @@ class PrivateMessageHandler {
 		});
 	}
 
+	async fixFormatting(text) {
+		const fix = /[\\_*\[\]()~>#+\-=|\{\}.!]/g;
+		const newText = text.replaceAll(fix, (match) => `\\\\${match}`);
+		return newText;
+	}
+
 	async sendMenu(description, buttons) {
 		await this.telegram('sendMessage', {
 			chat_id: this.chatId,
@@ -377,6 +391,7 @@ class PrivateMessageHandler {
 				resize_keyboard: true,
 				one_time_keyboard: true,
 			},
+			parse_mode: 'HTML',
 		});
 	}
 
@@ -466,11 +481,11 @@ class PrivateMessageHandler {
 				}
 
 				let cardRow = await this.hourlyBase.query(`select A, J, I, H where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and T = ${tuid}`);
+				this.username = this.username.replace('@', '');
 				if (cardRow.length > 0) {
 					let [rowId, cardId, oldUsername, oldPhone] = cardRow[0];
-					let username = this.username.replace('@', '');
-					if (this.username && oldUsername != username) {
-						await this.updateCardField('I', rowId, oldUsername, username, 'юзернейма', descTelegramRegex, cardId, 'Telegram:');
+					if (this.username && oldUsername != this.username) {
+						await this.updateCardField('I', rowId, oldUsername, this.username, 'юзернейма', descTelegramRegex, cardId, 'Telegram:');
 					}
 					if (this.phone && oldPhone != this.phone) {
 						await this.updateCardField('H', rowId, oldPhone, this.phone, 'телефона', descPhoneRegex, cardId, 'Телефон:');
@@ -496,7 +511,7 @@ class PrivateMessageHandler {
 						await this.setState('register_phone');
 						return this.sendPhoneNicknameMenu();
 					}
-					cardRow = await this.hourlyBase.query(`select A, J, T where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and I = "${username}"`);
+					cardRow = await this.hourlyBase.query(`select A, J, T where E = "${name}" and F = "${familyname}" and O = date "${birthdate}" and I = "${this.username}"`);
 					if (cardRow.length > 0) {
 						let [rowId, cardId, oldTuid] = cardRow[0];
 						if (oldTuid != '' && tuid != oldTuid) {
@@ -566,7 +581,7 @@ const reLPRUslugiChat = /^ЛПРУслуги-чат;.*\((.*?)\).*/;
 const reLPRUslugiEmergency = /^ЗАДЕРЖАНИЕ!.*\((.*?)\).*/;
 class GroupMessageHandler {
 	constructor(message, env) {
-		this.text = message.text;
+		this.text = message.text || '';
 		this.chatId = message.chat.id;
 		this.reply = message.reply_to_message;
 		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
