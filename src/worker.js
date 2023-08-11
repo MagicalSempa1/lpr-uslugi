@@ -140,6 +140,21 @@ class PrivateMessageHandler {
 		});
 	}
 
+	async forceReplyWithCancel(placeholder, text) {
+		await this.telegram('sendMessage', {
+			chat_id: this.chatId,
+			text: text,
+			reply_markup: {
+				force_reply: true,
+				input_field_placeholder: placeholder,
+				keyboard: [[{ text: 'Отмена' }]],
+				is_persistent: true,
+				resize_keyboard: true,
+				one_time_keyboard: false,
+			},
+		});
+	}
+
 	async doMenus() {
 		if (this.state.startsWith('changing_')) {
 			return this.doChanging();
@@ -225,6 +240,11 @@ class PrivateMessageHandler {
 	async doChanging() {
 		let input = this.text.replaceAll(textCleanupRegex, '');
 		let data;
+		if (input.toLowerCase() === 'отмена') {
+			await this.setState('menu_changing');
+			await this.sendMessage('Возвращаемся без изменений');
+			return this.sendMenu('Вы в меню изменения учётных данных', await this.buildMenu('menu_changing'));
+		}
 		switch (this.state) {
 			case 'changing_phone':
 				data = (await this.hourlyBase.query(`select A, H, J where T = ${this.tuid}`))[0];
@@ -299,37 +319,37 @@ class PrivateMessageHandler {
 					data = (await this.hourlyBase.query(`select H where T = ${this.tuid}`))[0];
 					await this.sendMessage('Телефон сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Телефон', 'Введите новый телефон:');
+					await this.forceReplyWithCancel('Телефон', 'Введите новый телефон:');
 					return;
 				case 'changing_email':
 					data = (await this.hourlyBase.query(`select K where T = ${this.tuid}`))[0];
 					await this.sendMessage('Email сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Email', 'Введите новый email:');
+					await this.forceReplyWithCancel('Email', 'Введите новый email:');
 					return;
 				case 'changing_region':
 					data = (await this.hourlyBase.query(`select L where T = ${this.tuid}`))[0];
 					await this.sendMessage('Регион сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Регион', 'Введите новый регион:');
+					await this.forceReplyWithCancel('Регион', 'Введите новый регион:');
 					return;
 				case 'changing_city':
 					data = (await this.hourlyBase.query(`select N where T = ${this.tuid}`))[0];
 					await this.sendMessage('Город сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Город', 'Введите новый город:');
+					await this.forceReplyWithCancel('Город', 'Введите новый город:');
 					return;
 				case 'changing_district':
 					data = (await this.hourlyBase.query(`select M where T = ${this.tuid}`))[0];
 					await this.sendMessage('Район сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Район', 'Введите новый район:');
+					await this.forceReplyWithCancel('Район', 'Введите новый район:');
 					return;
 				case 'changing_address':
 					data = (await this.hourlyBase.query(`select V where T = ${this.tuid}`))[0];
 					await this.sendMessage('Адрес сейчас:');
 					await this.sendMessage(`${data[0]}`);
-					await this.forceReply('Адрес', 'Введите новый адрес:');
+					await this.forceReplyWithCancel('Адрес', 'Введите новый адрес:');
 					return;
 			}
 		}
