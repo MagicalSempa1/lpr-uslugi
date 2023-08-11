@@ -612,8 +612,8 @@ class PrivateMessageHandler {
 	}
 }
 
-const reLPRUslugiChat = /^ЛПРУслуги-чат;.*\((.*?)\).*/;
-const reLPREmergencyChat = /^ЗАДЕРЖАНИЕ!.*\((.*?)\).*/;
+const reLPRUslugiChat = /^ЛПРУслуги-чат;.*?\((.*?)\).*/;
+const reLPREmergencyChat = /^ЗАДЕРЖАНИЕ!.*?\((.*?)\).*/;
 class GroupMessageHandler {
 	constructor(message, env) {
 		this.text = message.text || '';
@@ -661,7 +661,7 @@ class GroupMessageHandler {
 					});
 					await this.telegram('copyMessage', {
 						chat_id: replyChatId,
-						from_chat_id: this.chatId,
+						from_chat_id: this.MRK_CHAT_ID,
 						message_id: this.messageId,
 					});
 					break;
@@ -672,7 +672,7 @@ class GroupMessageHandler {
 					});
 					await this.telegram('copyMessage', {
 						chat_id: replyChatId,
-						from_chat_id: this.chatId,
+						from_chat_id: this.EMERGENCY_CHAT_ID,
 						message_id: this.messageId,
 					});
 					break;
