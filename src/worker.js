@@ -65,6 +65,7 @@ class PrivateMessageHandler {
 		this.LPR_USLUGI_BOT_STATE_GID = env.LPR_USLUGI_BOT_STATE_GID;
 		this.LPR_USLUGI_BOT_MENU_GID = env.LPR_USLUGI_BOT_MENU_GID;
 		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
+		this.EMERGENCY_CHAT_ID = parseInt(env.EMERGENCY_CHAT_ID, 10);
 		this.hourlyBase = null;
 		this.botState = null;
 		this.telegram = telegram(env.TELEGRAM_BOT_TOKEN);
@@ -226,15 +227,14 @@ class PrivateMessageHandler {
 			return this.sendMainMenu();
 		}
 		try {
-			let user = (await this.hourlyBase.query(`select D, С, H, I, K, L, N, M, V where T = ${this.tuid}`))[0];
-			if (user) {
-				await this.sendToMRK(`ЗАДЕРЖАНИЕ! (${this.tuid}) ${user[0]}; ${user[1]}; ${user[2]}; @${user[3]}; ${user[4]}; ${user[5]}; ${user[6]}; ${user[7]}; ${user[8]}`);
-			}
+			let user = (await this.hourlyBase.query(`select D, C, H, I, K, L, N, M, V where T = ${this.tuid}`))[0];
+			await this.sendToEmergency(`ЗАДЕРЖАНИЕ! (${this.tuid}) ${user[0]}; ${user[1]}; ${user[2]}; @${user[3]}; ${user[4]}; ${user[5]}; ${user[6]}; ${user[7]}; ${user[8]}`);
 		} catch (err) {
+			console.log(err);
 			return;
 		}
 		await this.setState('emergency_chat');
-		return this.sendMessage('Задержание подтверждено! Учётная запись заблокирована и переведена в режим экстренного чата с МРК. Все сообщения пересылаются в чат МРК.');
+		return this.sendMessage('Задержание подтверждено! Учётная запись заблокирована и переведена в режим связи с правозащитным чатом. Все сообщения пересылаются в чат правозащиты.');
 	}
 
 	async doChanging() {
@@ -613,7 +613,6 @@ class PrivateMessageHandler {
 }
 
 const reLPRUslugiChat = /^ЛПРУслуги-чат;.*\((.*?)\).*/;
-const reLPRUslugiEmergency = /^ЗАДЕРЖАНИЕ!.*\((.*?)\).*/;
 class GroupMessageHandler {
 	constructor(message, env) {
 		this.text = message.text || '';
@@ -621,6 +620,7 @@ class GroupMessageHandler {
 		this.messageId = message.message_id;
 		this.reply = message.reply_to_message;
 		this.MRK_CHAT_ID = parseInt(env.MRK_CHAT_ID, 10);
+		this.EMERGENCY_CHAT_ID = parseInt(env.EMERGENCY_CHAT_ID, 10);
 		this.telegram = telegram(env.TELEGRAM_BOT_TOKEN);
 	}
 
@@ -641,21 +641,15 @@ class GroupMessageHandler {
 		if (this.reply) {
 			let replyMatch = (this.reply.text || '').match(reLPRUslugiChat);
 			if (replyMatch) {
-				let replyChatId = parseInt(replyMatch[1]);
-				return this.resendToUser(replyChatId, 'mrk');
-			}
-			replyMatch = (this.reply.text || '').match(reLPRUslugiEmergency);
-			if (replyMatch) {
-				let replyChatId = parseInt(replyMatch[1]);
-				return this.resendToUser(replyChatId, 'emergency');
+				return this.resendToUser(parseInt(replyMatch[1], 10));
 			}
 		}
 	}
 
-	async resendToUser(replyChatId, type) {
+	async resendToUser(replyChatId) {
 		try {
-			switch (type) {
-				case 'mrk':
+			switch (this.chatId) {
+				case this.MRK_CHAT_ID:
 					await this.telegram('sendMessage', {
 						chat_id: replyChatId,
 						text: `МРК написал:`,
@@ -666,7 +660,7 @@ class GroupMessageHandler {
 						message_id: this.messageId,
 					});
 					break;
-				case 'emergency':
+				case this.EMERGENCY_CHAT_ID:
 					await this.telegram('sendMessage', {
 						chat_id: replyChatId,
 						text: `Из правозащитной группы:`,
