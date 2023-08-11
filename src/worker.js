@@ -613,6 +613,7 @@ class PrivateMessageHandler {
 }
 
 const reLPRUslugiChat = /^ЛПРУслуги-чат;.*\((.*?)\).*/;
+const reLPREmergencyChat = /^ЗАДЕРЖАНИЕ!.*\((.*?)\).*/;
 class GroupMessageHandler {
 	constructor(message, env) {
 		this.text = message.text || '';
@@ -640,6 +641,10 @@ class GroupMessageHandler {
 		}
 		if (this.reply) {
 			let replyMatch = (this.reply.text || '').match(reLPRUslugiChat);
+			if (replyMatch) {
+				return this.resendToUser(parseInt(replyMatch[1], 10));
+			}
+			replyMatch = (this.reply.text || '').match(reLPREmergencyChat);
 			if (replyMatch) {
 				return this.resendToUser(parseInt(replyMatch[1], 10));
 			}
