@@ -4,7 +4,8 @@ function daysInMonth(year, month) {
 	return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
-function checkOverflow(year, month, day, hour, minute, second) {
+function checkDatetimeIsNullOrOverflow(year, month, day, hour, minute, second) {
+	if (year === null || month === null || day === null || hour === null || minute === null || second === null) return true;
 	if (month && (month < 0 || month > 11)) return true;
 	if (day && (day < 0 || day > daysInMonth(year, month))) return true;
 	if (hour && (hour < 0 || hour > 24 || (hour === 24 && (minute !== 0 || second !== 0)))) return true;
@@ -98,7 +99,7 @@ function getDate(dateString, formatString) {
 		}
 	}
 
-	if (year === null || month === null || day === null || checkOverflow(year, month, day, hour, minute, second)) {
+	if (checkDatetimeIsNullOrOverflow(year, month, day, hour, minute, second)) {
 		return 'NaD';
 	} else {
 		return new Date(Date.UTC(year, month, day, hour, minute, second));
